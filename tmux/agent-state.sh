@@ -58,6 +58,9 @@ RELAY_EVENTS=~/.local/state/slack-relay/events.jsonl
 payload=""
 relay_event() {
   [ -f "$RELAY_EVENTS" ] || return 0
+  # A Windows session's event, from bin/remote-winmux's watcher: its transcript
+  # is on Windows, where the relay can't read it.
+  [ -z "${REMOTE_WINMUX_EVENT:-}" ] || return 0
   jq -c --arg event "$1" --argjson time "$(date +%s)" \
     '{event: $event, time: $time, session_id, transcript_path, cwd}
       + (if .prompt then {prompt: .prompt[0:300]} else {} end)
@@ -142,19 +145,22 @@ runs_claude() {
 }
 
 # Recomputes @agent for one window from its panes, dropping the state of any
-# pane no longer running Claude.
+# pane no longer running Claude. A tab on the Windows machine (@remote, from
+# tmux/remote-tab.zsh) runs its Claude there, out of sight of ps; its state
+# comes from that Claude's own hooks, through bin/remote-winmux's watcher,
+# which clears it when the session ends.
 refresh() {
-  local window=$1 best="" rank=0 pane state command tty r
-  while IFS=$'\t' read -r pane state command tty; do
+  local window=$1 best="" rank=0 pane state command tty remote r
+  while IFS=$'\t' read -r pane state command tty remote; do
     [ -n "$state" ] || continue
-    if ! runs_claude "$command" "$tty"; then
+    if [ -z "$remote" ] && ! runs_claude "$command" "$tty"; then
       tmux set -pu -t "$pane" @agent_state 2>/dev/null
       tmux set -pu -t "$pane" @agent_since 2>/dev/null
       continue
     fi
     case $state in waiting) r=3 ;; done) r=2 ;; working) r=1 ;; *) r=0 ;; esac
     (( r > rank )) && { rank=$r; best=$state; }
-  done < <(tmux list-panes -t "$window" -F $'#{pane_id}\t#{@agent_state}\t#{pane_current_command}\t#{pane_tty}' 2>/dev/null)
+  done < <(tmux list-panes -t "$window" -F $'#{pane_id}\t#{@agent_state}\t#{pane_current_command}\t#{pane_tty}\t#{@remote}' 2>/dev/null)
   if [ -n "$best" ]; then
     tmux set -w -t "$window" @agent "$best"
   else
@@ -217,7 +223,7 @@ DETAILS='
         elif $tool == "AskUserQuestion" then "asks: " + ((($in.questions // [])[0].question) // "") | short(80)
         else "" end),
       ( {"review-loop": "review", "ci-loop": "ci", "queue-and-clean": "queue", "deploy-test": "deploy"}[
-          if .hook_event_name == "UserPromptSubmit" then ((.prompt // "") | capture("^\\s*/(?<s>[a-z-]+)")?.s // "")
+          if .hook_event_name == "UserPromptSubmit" then (((.prompt // "") | capture("^\\s*/(?<s>[a-z-]+)").s)? // "")
           elif $tool == "Skill" then ($in.skill // "")
           else "" end ] // "") ]
   | map(gsub("[\t\n\u001f]"; " ")) | join("\u001f")'

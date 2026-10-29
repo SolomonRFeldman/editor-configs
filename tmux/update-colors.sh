@@ -7,6 +7,9 @@
 
 pane_path="$1"
 session="$2"
+# A Windows tab's color, which bin/remote-winmux's watcher keeps on it (see
+# window-names.sh); its pane's own directory is only where the attach runs.
+remote_color="${3:-}"
 
 script_dir="$(dirname "$0")"
 
@@ -19,6 +22,7 @@ esac
 # From path-facts.sh, which caches it, so window-names.sh's ask for the same
 # directory below is answered from the cache.
 IFS=$'\t' read -r hex _ <<<"$("$script_dir/path-facts.sh" "$pane_path")"
+[[ $remote_color =~ ^[0-9a-f]{6}$ ]] && hex=$remote_color
 tmux set -g pane-active-border-style "fg=#${hex}"
 tmux set -g status-left "#[bg=#${hex},fg=$FG_BRIGHT,bold]  #S #{E:@agent_counts}#[bg=$BG_DARK] #(~/.config/tmux/health.sh)"
 tmux setw -g window-status-current-format "#[bg=$BG_MED,fg=#${hex},bold] #I:#{E:@agent_marker}#[bg=$BG_MED,fg=#${hex},bold]#{?@agent, ,}#W "

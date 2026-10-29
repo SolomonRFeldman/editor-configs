@@ -1,0 +1,108 @@
+#!/usr/bin/env node
+
+// remote-winmux: Claude Code (or PowerShell) sessions on a Windows machine that
+// keep running when you disconnect, attached to from the Mac over SSH.
+//
+// On the Mac:
+//   remote-winmux attach <name> [--cwd <windows path>] [--program claude|pwsh|lazygit] [--resume 1 | --session <id>]
+//                         attach to session <name>, starting it in <cwd> if it
+//                         isn't running (claude unless --program names another;
+//                         with --resume 1, Claude picks up the folder's last
+//                         conversation); a lost connection detaches, and the
+//                         session runs on; closing the tab ends it
+//   remote-winmux ls [--json]
+//                         the sessions running
+//   remote-winmux kill <name>
+//                         end a session's program
+//   remote-winmux name-for <windows path>
+//                         the session name a typed path gets
+//   remote-winmux watch [--start]
+//                         mark each Windows session's tab with Claude's state
+//                         there, as tmux/agent-state.sh marks a local one
+//                         (watch.js); --start runs it in the background unless
+//                         it already runs, which tmux/remote-tab.zsh does
+//
+// On Windows:
+//   remote-winmux server  the server, which the logon task runs
+//   remote-winmux bridge  what each SSH connection from the Mac runs
+//   remote-winmux hook set <working|waiting|done|clear> | hook notification
+//                         what Claude Code's hooks run, with the hook's JSON
+//                         on stdin (hook.js)
+//   remote-winmux install-hooks / statusline
+//                         add those hooks to ~/.claude/settings.json, which
+//                         setup.ps1 does
+//
+// The machine and where this repository is on it come from
+// ~/.config/remote-winmux/config.json on the Mac:
+//   { "host": "user@machine", "repo": "C:\\path\\to\\editor-configs" }
+//
+// Security: the server opens no network port. It listens on a named pipe,
+// and answers only a client whose first message carries the token it writes
+// at start to %LOCALAPPDATA%\remote-winmux\token, readable by your account
+// alone. From another machine the only way in is SSH, which proves who you are
+// and encrypts everything; the bridge it runs is a fixed command, and the
+// Mac's request is data it checks (config.js's checkRequest), never a command
+// line, so a session's name or path can't run anything.
+//
+// The code is in lib/remote-winmux/: frames (the wire format), config, server,
+// bridge and hook (Windows), and client and watch (Mac). This file only picks
+// the command.
+
+const { attach, ask } = require("../lib/remote-winmux/client");
+const { nameFor } = require("../lib/remote-winmux/config");
+
+const usage = () => {
+  console.error("usage: remote-winmux attach <name> [--cwd <path>] [--program claude|pwsh|lazygit] [--resume 1 | --session <id>] | ls [--json] | kill <name> | server | bridge");
+  process.exit(2);
+};
+
+// --flag value pairs after the positional arguments.
+const flags = (args) => {
+  const out = {};
+  for (let i = 0; i < args.length; i += 2) {
+    if (!args[i].startsWith("--") || args[i + 1] === undefined) usage();
+    out[args[i].slice(2)] = args[i + 1];
+  }
+  return out;
+};
+
+const main = async () => {
+  const [command, ...args] = process.argv.slice(2);
+  if (command === "server") return require("../lib/remote-winmux/server").serve();
+  if (command === "bridge") return require("../lib/remote-winmux/bridge").bridge();
+  if (command === "hook") return require("../lib/remote-winmux/hook").hook(args[0], args[1]);
+  if (command === "statusline") return require("../lib/remote-winmux/hook").statusline();
+  if (command === "install-hooks") {
+    const added = require("../lib/remote-winmux/hook").installHooks(__filename);
+    return console.log(added ? `added ${added} hooks and settings to ~/.claude/settings.json (the old one is settings.json.bak)` : "the hooks are already there");
+  }
+  if (command === "watch") {
+    const { watch, start } = require("../lib/remote-winmux/watch");
+    return args[0] === "--start" ? start(__filename) : watch();
+  }
+  try {
+    if (command === "attach") {
+      const [name, ...rest] = args;
+      if (!name) usage();
+      const { cwd, program, resume, session } = flags(rest);
+      process.exit(await attach(name, { cwd, program, resume: resume === "1", session }));
+    }
+    if (command === "ls") {
+      const list = await ask({ op: "ls" });
+      if (args[0] === "--json") return console.log(JSON.stringify(list));
+      for (const s of list) {
+        const attached = s.clients ? ` (${s.clients} attached)` : "";
+        console.log(`${s.name}\t${s.program}\t${s.cwd}${attached}`);
+      }
+      return;
+    }
+    if (command === "kill" && args[0]) return void (await ask({ op: "kill", name: args[0] }));
+    if (command === "name-for" && args[0]) return console.log(nameFor(args[0]));
+  } catch (err) {
+    console.error(`remote-winmux: ${err.message}`);
+    process.exit(1);
+  }
+  usage();
+};
+
+main();

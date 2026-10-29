@@ -13,6 +13,8 @@
 # environment, so nothing in it is read by a shell.
 #
 # The directory comes from pick-dir.zsh, which shape-open.zsh asks with too.
+# Its list includes the Windows machine's folders (remote-winmux), and one of
+# those opens through remote-tab.zsh instead, named by it.
 
 dim=$'\e[38;5;244m' red=$'\e[31m' reset=$'\e[0m'
 script_dir=${0:A:h}
@@ -24,7 +26,13 @@ fail() {
   exit 0
 }
 
-dir=$("$script_dir/pick-dir.zsh" "A new tab running Claude: Enter opens it there") || exit 0
+dir=$("$script_dir/pick-dir.zsh" --windows "A new tab running Claude: Enter opens it there") || exit 0
+
+# A folder on the Windows machine is remote-tab.zsh's.
+host=$(jq -r '.host // empty' ~/.config/remote-winmux/config.json 2>/dev/null)
+if [[ -n $host && $dir == "$host":* ]]; then
+  exec "$script_dir/remote-tab.zsh" open "${dir#"$host":}"
+fi
 
 # tmux expands formats in -c, so a # in the path is doubled.
 if [[ -n ${NEW_TAB_PROMPT:-} ]]; then

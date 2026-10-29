@@ -98,10 +98,30 @@ tool_command() {
 case "${1:-}" in
   open)
     tool=$2 pane=$3 dir=$4 client=$5
-    command=$(tool_command "$tool" "$dir" "$client" "$pane")
+    # A pane on the Windows machine (tmux/remote-tab.zsh) has its repository
+    # there, so lazygit runs there, in the pane's folder, as a session of its
+    # own that ends when lazygit does; the Mac has no copy to run it on.
+    IFS=$'\x1f' read -r remote remote_cwd remote_branch remote_color <<<"$(tmux display -p -t "$pane" $'#{@remote}\x1f#{@remote_cwd}\x1f#{@remote_branch}\x1f#{@remote_color}')"
+    if [ -n "$remote" ]; then
+      if [ "$tool" != lazygit ]; then
+        tmux display-message -c "$client" "$tool isn't there for a Windows pane"
+        exit 0
+      fi
+      name="${remote:0:56}-$(printf %06x $(( ((RANDOM << 15) | RANDOM) & 0xffffff )))"
+      command="zsh -i -c $(printf %q "remote-winmux attach $(printf %q "$name") --cwd $(printf %q "$remote_cwd") --program lazygit")"
+      # dir is the pane's stand-in for the repository (remote-tab.zsh), where
+      # the lazygit pane's client runs too.
+    else
+      command=$(tool_command "$tool" "$dir" "$client" "$pane")
+    fi
     [ -n "$command" ] || exit 0
     command="$command; ~/.config/tmux/pane-in-place.sh back $pane"
     tool_pane=$(tmux new-window -d -P -F '#{pane_id}' -c "$dir" "$command") || exit 0
+    if [ -n "$remote" ]; then
+      tmux set -p -t "$tool_pane" @remote "$name" \; set -p -t "$tool_pane" @remote_cwd "$remote_cwd" \; \
+        set -p -t "$tool_pane" @remote_program lazygit \; set -p -t "$tool_pane" @remote_branch "$remote_branch" \; \
+        set -p -t "$tool_pane" @remote_color "$remote_color"
+    fi
     tmux set -w -t "$tool_pane" @pane_parked 1
     tmux set -p -t "$tool_pane" @parked_pane "$pane"
     tmux set -p -t "$tool_pane" @in_place "$tool"

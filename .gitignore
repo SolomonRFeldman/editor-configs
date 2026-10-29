@@ -4,3 +4,6 @@
 claude/skills/*/scripts/node_modules/
 # lib's Node packages (setup.sh's lib_packages)
 lib/node_modules/
+
+# The Windows server's packages, installed by setup.ps1 with npm ci
+lib/remote-winmux/node_modules/

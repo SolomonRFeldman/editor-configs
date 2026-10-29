@@ -48,10 +48,23 @@ IFS=$'\t' read -r hex facts_label pr <<<"$("$script_dir/path-facts.sh" "$path")"
 # node program, keeps its name.
 claude_pid=$(claude_pid "$command" "$tty") && command=claude
 
+# A tab on the Windows machine (tmux/remote-tab.zsh) runs its program there:
+# what it runs, and Claude's last prompt, come from bin/remote-winmux's
+# watcher, which keeps them on the window from the session's events. One tmux
+# call for these and the tab's own name. \x1f between them, since tabs would
+# collapse an empty one; the prompt last, so anything in it stays in it.
+IFS=$'\x1f' read -r tab_name remote remote_claude remote_program remote_ahead remote_title remote_prompt <<<"$(tmux display -p -t "$pane" $'#{@tab_name}\x1f#{@remote}\x1f#{@remote_claude}\x1f#{@remote_program}\x1f#{@remote_ahead}\x1f#{@remote_title}\x1f#{@remote_prompt}' 2>/dev/null)"
+in_claude=$claude_pid
+if [ -n "$remote" ]; then
+  if [ "$remote_claude" = 1 ]; then command=claude in_claude=1; else command=${remote_program:-pwsh}; fi
+  # Claude runs in PowerShell, so a Claude pane's program, once it exits.
+  [ "$command" = claude ] && [ -z "$in_claude" ] && command=pwsh
+fi
+
 # Doubled #s so tmux prints what the user or Linear wrote rather than reading
 # it as a format.
 label=$("$script_dir/tab-label.sh" "$pane" "$path" "$facts_label")
-if [ -n "$(tmux show -wqv -t "$pane" @tab_name 2>/dev/null)" ]; then
+if [ -n "$tab_name" ]; then
   out="#[fg=$FG_BRIGHT,bold]${label//#/##}#[nobold]"
 else
   out="#[fg=$FG_BRIGHT]${label//#/##}"
@@ -63,8 +76,12 @@ if [ -n "$pr" ]; then
   # branch's upstream, or of origin's copy of it when no upstream is set.
   # Counted against what was last fetched or pushed, so it never touches the
   # network, and in one git call when there is an upstream.
-  ahead=$(git -C "$path" --no-optional-locks rev-list --count '@{upstream}..HEAD' 2>/dev/null) ||
+  # A Windows pane's path is its stand-in, which has none of its commits; the
+  # count comes from Windows, in @remote_ahead.
+  if [ -n "$remote" ]; then ahead=$remote_ahead
+  else ahead=$(git -C "$path" --no-optional-locks rev-list --count '@{upstream}..HEAD' 2>/dev/null) ||
     ahead=$(git -C "$path" --no-optional-locks rev-list --count "origin/$(git -C "$path" branch --show-current)..HEAD" 2>/dev/null)
+  fi
   if [[ $ahead =~ ^[0-9]+$ ]]; then
     if (( ahead > 0 )); then out="$out #[fg=colour220]↑$ahead to push"
     else out="$out #[fg=$FG_DIM]pushed"; fi
@@ -77,7 +94,7 @@ out="$out  #[fg=#$hex]${command//\#/##}"
 
 # What the Claude session is doing, as agent-state.sh records it from Claude
 # Code's hooks: the same states the tab's mark shows, in words.
-if [ -n "$claude_pid" ]; then
+if [ -n "$in_claude" ]; then
   # | between them, since whitespace would collapse an empty state.
   IFS="|" read -r state since <<<"$(tmux display -p -t "$pane" '#{@agent_state}|#{@agent_since}' 2>/dev/null)"
   took=""
@@ -107,6 +124,13 @@ fi
 # and reused only while it is strictly newer than both files. -nt is a shell
 # builtin, and a prompt written in the same second as the answer makes it
 # count as old, so a new prompt is never missed.
+# A Windows tab's, from the watcher: the /rename name in @remote_title, from
+# the session file it copies, and the prompt in @remote_prompt.
+if [ -n "$remote" ] && [ -n "$in_claude" ]; then
+  summary="${remote_title:+$remote_title${remote_prompt:+: }}${remote_prompt:+\"$remote_prompt\"}"
+  [ -n "$summary" ] && out="$out   #[fg=$FG_DIM]${summary//#/##}"
+fi
+
 session_file="$HOME/.claude/sessions/$claude_pid.json"
 summary_cache="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-tab-status/$claude_pid"
 if [ -n "$claude_pid" ] && [ -f "$session_file" ] && [ "$summary_cache" -nt "$session_file" ] && [ "$summary_cache" -nt "$HOME/.claude/history.jsonl" ]; then

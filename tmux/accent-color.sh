@@ -13,11 +13,20 @@
 # is only read, so it says each thing once.
 #
 # Usage: accent-color.sh [--name] <path>
+#        accent-color.sh --key <color key>
 # Output: hex color (e.g. "23ef59"), or with --name, the window name
+#
+# --key colors a key built elsewhere, for a directory this machine can't look
+# into: bin/remote-winmux's watcher builds a Windows folder's the same way,
+# "<dirname> | branch:<branch>", from what the Windows machine tells it.
 
 name_only=false
+key_given=false
 if [ "$1" = "--name" ]; then
   name_only=true
+  shift
+elif [ "$1" = "--key" ]; then
+  key_given=true
   shift
 fi
 cwd="${1:-.}"
@@ -25,7 +34,12 @@ dirname=$(basename "$cwd")
 color_key="$dirname"
 window_name="$dirname"
 
-branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
+if $key_given; then
+  color_key="$1"
+  branch=""
+else
+  branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
+fi
 if [ -n "$branch" ]; then
   git_common_dir=$(git -C "$cwd" --no-optional-locks rev-parse --git-common-dir 2>/dev/null)
   git_dir=$(git -C "$cwd" --no-optional-locks rev-parse --git-dir 2>/dev/null)

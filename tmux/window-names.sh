@@ -30,14 +30,20 @@ export LC_ALL=en_US.UTF-8
 # directory and isn't the tab's work either, so it counts only in a window
 # with no other pane, the Notes tab itself. The Notifications window
 # (@notices_window, the sidebar daemon's) is no tab and keeps its own name.
-tmux list-panes -s -t "$session" -F $'#{window_index}\t#{?@sidebar,s,#{?@notes_pane,n,#{?@notices_window,x,p}}}#{pane_active}\t#{pane_current_path}' |
+#
+# A tab on the Windows machine takes its color from its Windows folder and
+# branch there, which bin/remote-winmux's watcher keeps in @remote_color ("-"
+# when it has none, so the field is never empty): its pane's own directory is
+# only where the attach runs.
+tmux list-panes -s -t "$session" -F $'#{window_index}\t#{?@sidebar,s,#{?@notes_pane,n,#{?@notices_window,x,p}}}#{pane_active}\t#{pane_current_path}\t#{?@remote_color,#{@remote_color},-}' |
   awk -F'\t' '
-    $2 ~ /^p/ && (!($1 in path) || $2 == "p1") { if (!($1 in path) && !($1 in notes)) order[++n] = $1; path[$1] = $3 }
+    $2 ~ /^p/ && (!($1 in path) || $2 == "p1") { if (!($1 in path) && !($1 in notes)) order[++n] = $1; path[$1] = $3; color[$1] = $4 }
     $2 ~ /^n/ && !($1 in notes) { if (!($1 in path)) order[++n] = $1; notes[$1] = $3 }
-    END { for (i = 1; i <= n; i++) print order[i] "\t" (order[i] in path ? path[order[i]] : notes[order[i]]) }' |
-  while IFS=$'\t' read -r idx path; do
+    END { for (i = 1; i <= n; i++) print order[i] "\t" (order[i] in path ? path[order[i]] "\t" color[order[i]] : notes[order[i]] "\t-") }' |
+  while IFS=$'\t' read -r idx path remote_color; do
     # Color, label and PR in one cached answer (see path-facts.sh).
     IFS=$'\t' read -r whex label pr <<<"$("$script_dir/path-facts.sh" "$path")"
+    [ "$remote_color" != - ] && whex=$remote_color
 
     # The same label tab-status.sh puts at the front of the second status line.
     name=$("$script_dir/tab-label.sh" "${session}:${idx}" "$path" "$label")

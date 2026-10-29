@@ -1622,3 +1622,165 @@ checkout and the Codex login.
   unnoticed, so leave the checkout alone while a review runs.
 - Codex's progress output is discarded so stdout is just the JSON. Set
   `CODEX_REVIEW_VERBOSE=1` to watch it on stderr.
+
+## remote-winmux
+
+Claude Code (or PowerShell) sessions on a Windows machine that keep running
+when you disconnect, attached to from the Mac over SSH as if they were local.
+Claude runs natively on Windows, in the project, with Windows's own tools on
+its PATH: no WSL. Its code is in `lib/remote-winmux/`.
+
+```
+remote-winmux attach <name> [--cwd <windows path>] [--program claude|pwsh]
+                     attach to session <name>, starting it in <cwd> if it
+                     isn't running (claude unless --program says pwsh)
+remote-winmux ls [--json]
+                     the sessions running
+remote-winmux kill <name>
+                     end a session's program
+```
+
+Closing the terminal, or the tmux pane, detaches; the session keeps running,
+and the next `attach` draws its screen as it is now, at the new size. The last
+client to attach or resize sets the size.
+
+In tmux, `M-t`'s list of directories has the Windows folders in it as
+`<host>:<path>`, written out in full like any other directory: the open Windows
+tabs' with the open tabs, the ones you have opened among the recent ones by
+when (`~/.local/state/remote-winmux/recent`), and the `projects` in
+`config.json`. One not listed yet is typed in full, `<host>:C:\...`, as any
+other path is. Enter (`tmux/remote-tab.zsh`) opens a new tab with a new
+Claude there, as `M-t` does for a local directory, so a folder can have as
+many tabs as you like, each its own session (named after the folder, then
+`-2`, `-3`), unless a Claude on that folder is running there with no tab,
+which the tab takes back. Then it asks for a name as `M-t` does. Unnamed, the
+tab is named as a local one is, the folder and the branch there (the trunk
+left unsaid), in the accent color of its Windows folder and branch, and the
+second status line and the sidebar show `claude` or `pwsh`, Claude's state,
+the name you gave it with `/rename` and your last prompt, from facts the
+server sends with each of Claude's events. Claude runs inside PowerShell
+there, so exiting it leaves you at a prompt in the folder, as a local tab
+leaves you at a shell, and exiting that closes the tab. Closing the tab ends
+its Claude, as closing a local one does. A lost connection (the Mac slept, the
+network moved) only detaches it: the tab reconnects by itself, retrying every
+few seconds up to 15, and is drawn as the session is now. If the session ended
+meanwhile, because Windows or the server restarted, the tab starts it again
+with `claude --continue`, the folder's last conversation, or a new one when
+there is none. A session left with no tab for 12 hours, which only a Mac that
+died with its tabs leaves, is ended. The server drops a client it hasn't heard
+from in 90 seconds (the Mac pings every 30), so a dead connection leaves no
+bridge behind on Windows, where sshd doesn't end a session's processes when
+its connection does.
+
+A Windows tab shows Claude's state as a local one does: working, waiting
+and done in the tab, the sidebar and `M-a`, what it is doing or waiting on,
+and the banner when it needs you. Claude's hooks on Windows
+(`remote-winmux hook`) send each event to the server, and
+`remote-winmux watch`, which opening a Windows tab starts, holds one SSH
+connection to it and runs each through `tmux/agent-state.sh` for that tab's
+pane. A tab opened later gets its session's state at once. Over the same
+connection the watcher keeps a copy of each Windows Claude's session file and
+transcript in `~/.local/state/remote-winmux/claude`, laid out as `~/.claude`
+is, which the sidebar reads beside `~/.claude`, so a Windows tab's card,
+background tasks, idle time and the Sessions view read as a local one's. The
+server sends each transcript on from where the Mac's copy ends, checked
+against a hash of the copy's last kilobyte, so a dropped connection loses
+nothing and a copy that doesn't match is sent again whole. Claude on Windows
+shows the statusline Claude shows here (`remote-winmux statusline`: the
+model in the project's accent color and the context use, and outside a
+Windows tab the folder and branch too), which also sends the context use and
+model to the Sessions view; setup adds it only when Claude there has no
+statusline of its own. The Slack relay doesn't hear
+about Windows sessions.
+
+The PR keys work on a Windows tab as on a local one: the PR number in the tab,
+the second status line's PR and commits to push, `M-r`, `M-v`, `M-m` and
+copying the PR's number or URL. Each Windows session has a stand-in for its
+repository on the Mac (`~/.local/state/remote-winmux/repos/<session>`), a
+repository of one empty commit that its pane runs in, which the watcher keeps
+on the branch Windows is on with the same GitHub origin, so `gh` finds the
+branch's PR there. The server checks each session's branch every five
+seconds, so a `git checkout` in a PowerShell beside Claude reaches the tab
+as it would locally. `M-p`'s lazygit runs lazygit on Windows, in the pane's
+place, as it does locally; `M-d` stays local-only, since it needs the files.
+A Windows tab closed reopens from mission control's Closed view on Windows,
+its conversation resumed there by its ID. The watcher's log is
+`~/.local/state/remote-winmux/watch.log`.
+
+### Setup
+
+On Windows, clone this repository, install Node and Claude Code, and run
+`.\setup.ps1` from an elevated PowerShell 7 in the clone. It installs the
+server's pinned packages with `npm ci`, adds the hooks to your Windows
+`~/.claude/settings.json` (keeping the old one as `settings.json.bak`), and registers the `remote-winmux`
+scheduled task, which runs `remote-winmux server` when you sign in, with no
+window, and restarts it if it dies. The server's log is
+`%LOCALAPPDATA%\remote-winmux\server.log`.
+
+Sessions run as a Claude you start from the desktop does: in your desktop
+session, so a program they open can show its window (session 0, where a task
+runs when it doesn't need you signed in, has no display), and not elevated,
+even if your account is an administrator. So the server runs only while you
+are signed in: after a reboot, Windows tabs connect once you sign in, and
+signing out ends its sessions. Locking the screen doesn't, and sleep only
+pauses them; the Mac's tabs reconnect when the machine wakes.
+
+On the Mac, put the machine and the clone's path in
+`~/.config/remote-winmux/config.json`, which stays out of this repository:
+
+```json
+{
+  "host": "user@machine",
+  "repo": "C:\\path\\to\\editor-configs",
+  "projects": { "game": "C:\\path\\to\\game" }
+}
+```
+
+`projects`, optional, lists folders in `M-t` before you've opened them, and
+names their sessions; any other folder's session is named after its last part.
+
+### Security
+
+- The server opens no network port. It listens on a named pipe, and drops,
+  without an answer, any client whose first message isn't a hello carrying the
+  token, or that sends nothing within five seconds. The token is new on every
+  start and written to `%LOCALAPPDATA%\remote-winmux\token` with every
+  inherited permission removed and only your account granted; if that can't
+  be done, the server doesn't start.
+- From another machine the only way in is SSH: your key proves who you are and
+  SSH encrypts everything. Keep sshd to keys only and its firewall rule to
+  your Tailscale ranges.
+- Each connection runs one fixed command, the bridge
+  (`remote-winmux bridge`). The Mac's request travels inside the connection
+  as data, which the bridge and the server both check: a session name is 1 to
+  64 letters, digits, `.`, `_` or `-`, a directory must be an absolute path
+  that exists, and the program is `claude` or `pwsh` by name, with no
+  arguments. Nothing the Mac sends becomes a command line.
+- Every frame is capped at 4 MB.
+
+### Notes
+
+- `ssh -T`, without a pseudo-terminal, because Windows's sshd would otherwise
+  run the output through a ConPTY of its own and draw it again. Resizes travel
+  in the connection instead.
+- Every command shares one SSH connection of remote-winmux's own
+  (`~/.ssh/wm-*`, kept ten minutes after the last one closes), so a key in an
+  agent that asks you to approve each use, as 1Password's does, is asked for
+  once rather than for every tab, split and close. Its keepalives drop it within
+  30 seconds of the machine going away, so nothing waits on a dead one for long.
+- Splitting a Windows pane (`M-H`, `M-J`, `M-K`, `M-L`) opens PowerShell there
+  in the same folder, as a local split opens a shell in the pane's directory:
+  a session of its own, ended when its pane closes. Running `claude` in it
+  marks that pane with Claude's state as any other.
+- After tmux restarts, tmux-resurrect brings Windows panes back attached to
+  their sessions (`remote-tab.zsh restore`, from its post-restore hook), as it
+  brings a local Claude tab back running `claude-here`. A session still
+  running is as you left it; one that ended starts again with Claude picking up
+  the folder's last conversation.
+- The server keeps each session's screen in a headless xterm beside the
+  ConPTY, and draws it on attach, as tmux does.
+- Selecting text in Claude on Windows copies it to the Mac, as in a local tab.
+  Claude there doesn't know it is in tmux, so it sends the text as OSC 52,
+  which tmux's `set-clipboard external` ignores from a program; the attach
+  client picks it out of the session's output and copies it with
+  `tmux load-buffer -w` (pbcopy outside tmux), as local Claude does.

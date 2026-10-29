@@ -226,7 +226,9 @@ const main = () => {
 
   const cache = readCache();
   const sessions = recentSessions(cache);
-  const panes = tmux(["list-panes", "-a", "-F", "#{pane_current_path}"]).split("\n").filter(Boolean);
+  // A Windows pane's directory is only its stand-in for the repository there
+  // (tmux/remote-tab.zsh), nothing to reopen here.
+  const panes = tmux(["list-panes", "-a", "-F", "#{?@remote,,#{pane_current_path}}"]).split("\n").filter(Boolean);
 
   const dirs = [...new Set([dir, ...panes, ...sessions.map((session) => session.cwd)])];
   const repos = [
