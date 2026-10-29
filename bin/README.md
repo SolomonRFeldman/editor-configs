@@ -1764,10 +1764,16 @@ names their sessions; any other folder's session is named after its last part.
   run the output through a ConPTY of its own and draw it again. Resizes travel
   in the connection instead.
 - Every command shares one SSH connection of remote-winmux's own
-  (`~/.ssh/wm-*`, kept ten minutes after the last one closes), so a key in an
-  agent that asks you to approve each use, as 1Password's does, is asked for
-  once rather than for every tab, split and close. Its keepalives drop it within
-  30 seconds of the machine going away, so nothing waits on a dead one for long.
+  (`~/.ssh/wm-*`, kept an hour after the last one closes), and it is the only
+  ssh that signs in with your key, so an agent that asks you to approve each
+  use, as 1Password's does, asks once rather than for every tab, split and
+  close. When it is down, the first command to want it starts it while the
+  rest wait and join it, so even the watcher and every tab reconnecting at
+  once after the network drops make one request; a command never signs in on
+  its own. If you turn the request down, nothing in the background asks again
+  for ten minutes: a tab waiting to reconnect says so, and a key pressed in
+  it, a new tab or `ls` asks at once. Its keepalives drop it within 30
+  seconds of the machine going away, so nothing waits on a dead one for long.
 - Splitting a Windows pane (`M-H`, `M-J`, `M-K`, `M-L`) opens PowerShell there
   in the same folder, as a local split opens a shell in the pane's directory:
   a session of its own, ended when its pane closes. Running `claude` in it

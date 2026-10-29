@@ -142,3 +142,56 @@ test("the Windows statusline prints what the Mac's prints, accent color and all"
   fs.rmSync(dir, { recursive: true });
   fs.rmSync(home, { recursive: true });
 });
+
+// The shared connection, against a stand-in ssh: `-O check` answers from a
+// file, and a master records itself and is refused while another file is
+// there. Run in a child with its own HOME, since the paths are read at load.
+const masterRun = (script, { refuse = false } = {}) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "wm-master-"));
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  fs.mkdirSync(path.join(home, ".config/remote-winmux"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".config/remote-winmux/config.json"), JSON.stringify({ host: "me@win", repo: "C:\\r" }));
+  if (refuse) fs.writeFileSync(path.join(home, "refuse"), "");
+  fs.writeFileSync(path.join(bin, "ssh"), `#!/bin/bash
+case " $* " in
+  *" -O check "*) [ -e "$HOME/up" ] ;;
+  *" -G "*) echo "controlpath $HOME/.ssh/wm-x" ;;
+  *" -M "*)
+    echo master >> "$HOME/masters"
+    sleep 0.3
+    if [ -e "$HOME/refuse" ]; then echo 'sign_and_send_pubkey: signing failed for ED25519 "k" from agent: agent refused operation' >&2; exit 255; fi
+    touch "$HOME/up" ;;
+  *) exit 255 ;;
+esac
+`, { mode: 0o755 });
+  const out = require("node:child_process").execFileSync(process.execPath, ["-e", `
+    const { ensureMaster } = require(${JSON.stringify(path.join(__dirname, "../lib/remote-winmux/client"))});
+    (async () => { console.log(JSON.stringify(await (${script})(ensureMaster))); })();
+  `], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" });
+  let masters = 0;
+  try {
+    masters = fs.readFileSync(path.join(home, "masters"), "utf8").trim().split("\n").length;
+  } catch {}
+  fs.rmSync(home, { recursive: true, force: true });
+  return { result: JSON.parse(out), masters };
+};
+
+test("many connections wanting Windows at once start one master, so the key is asked for once", () => {
+  const { result, masters } = masterRun(`(ensure) => Promise.all([1, 2, 3, 4, 5].map((i) => ensure("me@win", { background: i > 1 })))`);
+  assert.deepStrictEqual(result, [null, null, null, null, null]);
+  assert.strictEqual(masters, 1);
+});
+
+test("once the key is refused, the background stops asking, and so does an ask right after", () => {
+  const { result, masters } = masterRun(`async (ensure) => {
+    const first = await ensure("me@win");
+    const later = await Promise.all([1, 2, 3].map(() => ensure("me@win", { background: true })));
+    const now = await ensure("me@win");
+    return [first, later, now];
+  }`, { refuse: true });
+  assert.match(result[0], /agent refused operation/);
+  result[1].forEach((why) => assert.match(why, /key was refused/));
+  assert.match(result[2], /key was refused/);
+  assert.strictEqual(masters, 1);
+});
