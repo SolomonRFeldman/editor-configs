@@ -12,10 +12,9 @@ script_dir="$(dirname "$0")"
 state_file="$script_dir/.theme-mode"
 
 # Ghostty themes — override via env if you want different ones.
-# GitHub Light Default has noticeably darker bright_black than Tomorrow,
-# so TUI dim/placeholder text stays readable on white.
-GHOSTTY_THEME_DARK="${GHOSTTY_THEME_DARK:-Tomorrow Night}"
-GHOSTTY_THEME_LIGHT="${GHOSTTY_THEME_LIGHT:-GitHub Light High Contrast}"
+# Rose Pine and its light variant, Rose Pine Dawn, both built into Ghostty.
+GHOSTTY_THEME_DARK="${GHOSTTY_THEME_DARK:-Rose Pine}"
+GHOSTTY_THEME_LIGHT="${GHOSTTY_THEME_LIGHT:-Rose Pine Dawn}"
 
 mode="${1:-toggle}"
 
@@ -56,6 +55,11 @@ tmux set -g window-style "bg=$BG_DIM"
 tmux set -g window-active-style "bg=terminal"
 tmux set -g message-style "bg=$BG_DARK,fg=$FG"
 tmux set -g message-command-style "bg=$BG_DARK,fg=$FG"
+# tmux 3.8 gives popups and menus a grey theme background; keep the terminal's.
+tmux set -g popup-style "bg=default,fg=default"
+tmux set -g popup-border-style "bg=default,fg=$FG_DIM"
+tmux set -g menu-style "bg=default,fg=default"
+tmux set -g menu-border-style "bg=default,fg=$FG_DIM"
 
 pane_path=$(tmux display -p '#{pane_current_path}')
 session=$(tmux display -p '#{session_name}')
